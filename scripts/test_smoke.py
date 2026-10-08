@@ -42,6 +42,33 @@ def test_no_hardcoded_judge_model():
         assert "gpt-4o-mini" not in text and "claude-haiku" not in text, f"hard-coded judge id in {p}"
 
 
+def test_kaggle_bundle_preserves_student_code():
+    from build_kaggle import SOURCE, TARGET, render, validate
+
+    nb = render()
+    validate(nb)
+    assert json.loads(TARGET.read_text(encoding="utf-8")) == nb
+    original = json.loads(SOURCE.read_text(encoding="utf-8"))
+    original_code = ["".join(c["source"]) for c in original["cells"][5:] if c["cell_type"] == "code"]
+    kaggle_code = ["".join(c["source"]) for c in nb["cells"][5:]
+                   if c["cell_type"] == "code" and not "".join(c["source"]).startswith("%pip")]
+    normalized = [s.replace('        device_map={"": 0},\n', '')
+                  if s.startswith("%%writefile /kaggle/working/lab22/lab22/modeling.py") else s
+                  for s in kaggle_code]
+    assert normalized == [s.replace("/content/lab22", "/kaggle/working/lab22") for s in original_code]
+    assert any('        device_map={"": 0},\n' in s for s in kaggle_code)
+    setup = "".join(nb["cells"][2]["source"])
+    assert 'os.environ["CUDA_VISIBLE_DEVICES"] = "0"' in setup
+    assert 'os.environ["COMPUTE_TIER"] = "T4"' in setup
+    core_install = "".join(nb["cells"][3]["source"])
+    assert "unsloth" in core_install
+    assert all(dep not in core_install for dep in ("llama-cpp-python", "lm-eval", "openai", "anthropic"))
+    work_setup = "".join(nb["cells"][4]["source"])
+    assert work_setup.index("import unsloth") < work_setup.index("import torch")
+    assert "raise FileExistsError" in work_setup
+    assert "source.is_relative_to" in work_setup
+
+
 def test_colab_bundles_are_valid_and_current():
     from build_colab import render
 
